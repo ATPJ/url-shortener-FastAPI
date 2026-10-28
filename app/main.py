@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 
-app = FastAPI(title="URL Shorter")
+app = FastAPI(title="URL Shortener")
+
 
 @app.get("/health")
 def health(db: Session = Depends(get_db)) -> dict[str, str]:
@@ -15,4 +16,4 @@ def health(db: Session = Depends(get_db)) -> dict[str, str]:
         print(E)
         raise HTTPException(status_code=503, detail="Something went wrong!")
 
-    return {'health': "ok!"}
+    return {"health": "ok!"}
