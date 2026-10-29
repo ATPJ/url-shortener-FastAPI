@@ -16,11 +16,10 @@ app = FastAPI(title="URL Shortener")
 def health(db: Session = Depends(get_db)) -> dict[str, str]:
     try:
         db.execute(text("SELECT 1"))
-    except SQLAlchemyError as E:
-        print(E)
+    except SQLAlchemyError:
         raise HTTPException(status_code=503, detail="Something went wrong!")
 
-    return {"health": "ok!"}
+    return {"status": "ok"}
 
 
 app.include_router(links.router)

@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.schemas import LinkCreate, LinkResponse
+from app.schemas import AnalyticsResponse, LinkCreate, LinkResponse
 from app.services import links as links_service
 
 router = APIRouter(tags=["links"])
@@ -30,3 +31,31 @@ def create_link(payload: LinkCreate, db: Session = Depends(get_db)) -> LinkRespo
         original_url=link.original_url,
         expires_at=link.expires_at,
     )
+
+
+@router.get("/analytics/{code}", response_model=AnalyticsResponse)
+def analytics(code: str, db: Session = Depends(get_db)) -> AnalyticsResponse:
+    try:
+        link = links_service.get_link(db, code)
+    except links_service.LinkNotFoundError:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    return AnalyticsResponse(
+        short_code=link.short_code,
+        original_url=link.original_url,
+        click_count=link.click_count,
+        created_at=link.created_at,
+        expires_at=link.expires_at,
+    )
+
+
+@router.get("/{code}")
+def redirect(code: str, db: Session = Depends(get_db)) -> RedirectResponse:
+    try:
+        url = links_service.resolve_link(db, code)
+    except links_service.LinkNotFoundError:
+        raise HTTPException(status_code=404, detail="Link not found")
+    except links_service.LinkExpiredError:
+        raise HTTPException(status_code=410, detail="Link expired")
+
+    return RedirectResponse(url, status_code=302)

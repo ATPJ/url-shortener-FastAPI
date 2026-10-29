@@ -12,3 +12,11 @@ class LinkResponse(BaseModel):
     short_url: str
     original_url: str
     expires_at: datetime
+
+
+class AnalyticsResponse(BaseModel):
+    short_code: str
+    original_url: str
+    click_count: int
+    created_at: datetime
+    expires_at: datetime

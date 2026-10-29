@@ -3,6 +3,7 @@ import secrets
 import string
 from datetime import datetime, timedelta
 
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,7 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 class ShortCodeGenerationError(Exception):
-    """Failed for max retires"""
+    """Failed for max retries"""
+
+
+class LinkNotFoundError(Exception):
+    """No link with this short code."""
+
+
+class LinkExpiredError(Exception):
+    """The link exists but has expired."""
 
 
 def generate_short_code() -> str:
@@ -51,3 +60,26 @@ def create_link(db: Session, original_url: str) -> Link:
 
     logger.error("Short code generation failed after %d retries.", MAX_RETRIES)
     raise ShortCodeGenerationError()
+
+
+def get_link(db: Session, code: str) -> Link:
+    link = db.scalar(select(Link).where(Link.short_code == code))
+    if link is None:
+        raise LinkNotFoundError
+    return link
+
+
+def resolve_link(db: Session, code: str) -> str:
+    link = get_link(db, code)
+
+    if link.expires_at <= utc_now():
+        raise LinkExpiredError
+
+    url = link.original_url
+
+    db.execute(
+        update(Link).where(Link.id == link.id).values(click_count=Link.click_count + 1)
+    )
+    db.commit()
+
+    return url
