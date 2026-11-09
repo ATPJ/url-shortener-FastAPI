@@ -3,11 +3,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app import models  # noqa: F401
-from app.database import Base, engine, get_db
+from app.database import get_db
 from app.routers import links
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="URL Shortener")
 
