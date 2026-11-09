@@ -13,13 +13,13 @@ A small URL shortener API: create a short link, get redirected, count clicks, an
 
 ## Tech stack
 
-FastAPI · PostgreSQL 16 · SQLAlchemy 2.x (sync, psycopg 3) · Pydantic / pydantic-settings · Docker Compose · pytest · uv · ruff
+FastAPI · PostgreSQL 16 · SQLAlchemy 2.x (sync, psycopg 3) · Alembic · Pydantic / pydantic-settings · Docker Compose · pytest · uv · ruff
 
 ## Quick start
 
 ```bash
 cp .env.example .env      # then fill in the values
-docker compose up --build
+docker compose up --build # migrate service will create tables before api service
 ```
 
 The API is available at http://localhost:8000.
@@ -69,9 +69,30 @@ Response (shape):
 
 Note: Pydantic normalizes URLs, so `https://example.com` is stored as `https://example.com/`.
 
+## Database migrations
+
+`docker compose up` runs the migrations automatically (the `migrate` service). The commands below are for running them by hand from your machine: the `db` service must be running and `DATABASE_URL` in `.env` must point to `127.0.0.1`.
+
+Apply migrations
+```bash
+uv run alembic upgrade head
+```
+
+Making migrations
+```bash
+uv run alembic revision --autogenerate -m "..." # always review the migration script
+```
+
+Rollback to last version
+```bash
+uv run alembic downgrade -1
+```
+
 ## Running tests
 
 Tests need a running PostgreSQL and a separate database named `<POSTGRES_DB>_test` (they truncate the `links` table, so they never touch the development database).
+
+The test schema is not created with `create_all`: `conftest.py` runs `alembic upgrade head` once per test session on the `_test` database, so the tests also verify that the migrations work.
 
 ```bash
 docker compose up -d db
@@ -89,7 +110,10 @@ uv run pytest -v
 - **No request to the target URL on creation:** avoids SSRF risks. URLs are validated with Pydantic instead (http/https only, max 2048 characters).
 - **One engine, one session per request:** the engine holds the connection pool (`pool_pre_ping`, `connect_timeout`); `get_db` yields a session per request and always closes it.
 - **Sync SQLAlchemy:** simpler to reason about and enough for this scale.
-- **Docker:** dependency files are copied and installed before the app code to use the layer cache (`uv sync --locked --no-dev`). The API waits for the database healthcheck (`depends_on: service_healthy`). The database port is bound to `127.0.0.1` only.
+- **Docker:** dependency files are copied and installed before the app code to use the layer cache (`uv sync --locked --no-dev`). The `migrate` service waits for the database healthcheck (`depends_on: service_healthy`) and the API waits for `migrate` to finish successfully (`service_completed_successfully`). The database port is bound to `127.0.0.1` only.
+- **Alembic instead of `create_all`:** `create_all` only creates missing tables and never alters existing ones, so any schema change would need dropping the data. Alembic keeps a versioned history of schema changes (`upgrade` / `downgrade`), so every environment goes through the same steps. Trade-off: `--autogenerate` only writes a diff (for example a renamed column looks like drop + add and would lose its data), so every generated migration must be reviewed by hand before it is applied.
+- **Separate `migrate` service:** migrations run in a one-shot container built from the same image as the API, and the API starts only after it exits successfully. Migrations run once per `docker compose up`, and a failed migration shows up in its own logs and stops the API from starting. Trade-off: one more service in the compose file. Running migrations in the API start command would be simpler, but every API container would run them, which can race if there are several.
+- **Tests run through the migrations:** `conftest.py` applies `alembic upgrade head` to the test database once per session instead of using `create_all`, so tests use the same schema as the real database and also check that the migrations work. Trade-off: slightly slower, and the test database must already exist.
 - **Tests on real PostgreSQL:** SQLite returns naive datetimes, which breaks the expiration check. Rare cases (code collisions) are forced with `monkeypatch`.
 
 ## Project structure
@@ -104,6 +128,8 @@ app/
   routers/links.py # HTTP endpoints
   services/links.py# business logic (create, resolve, analytics)
 tests/             # pytest tests (conftest.py selects the test database)
+alembic/           # migrations (env.py, versions/)
+alembic.ini        # Alembic config (the database URL comes from settings)
 Dockerfile
 docker-compose.yml
 ```
@@ -117,10 +143,10 @@ docker-compose.yml
 - [x] Docker Compose setup with database healthcheck
 - [x] Tests: create link, invalid URL, redirect, click count, unknown code, expired link, health, code collision and retry limit
 - [x] Linting and formatting with ruff
+- [x] Database migrations with Alembic (migrate service before api service in docker compose)
 
 **Planned (not implemented yet)**
 
-- [ ] Database migrations with Alembic (currently `create_all` on startup)
 - [ ] CI with GitHub Actions (ruff + pytest with a PostgreSQL service)
 - [ ] Rate limiting on `POST /links`
 - [ ] Concurrency test for the click counter
@@ -132,6 +158,5 @@ docker-compose.yml
 **Known limitations**
 
 - No authentication or users
-- No migrations; schema changes are not applied automatically
 - Expired rows are never removed, so the table only grows
 - The atomic click counter is explained by design but not covered by a concurrency test
